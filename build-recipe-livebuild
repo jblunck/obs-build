@@ -193,22 +193,34 @@ recipe_build_livebuild() {
     chroot $BUILD_ROOT su -c "cd $TOPDIR/$LIVEBUILD_ROOT && lb build" - root \
 	< /dev/null || cleanup_and_exit 1
 
-    # Move created product to destination
-    for i in $BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT/* ; do
-	test -f "$i" || continue
-	case "${i##*/}" in
-	    *.iso)
-		# all created files share the same name without suffix
-		mv ${i%%.iso}.* $BUILD_ROOT/$TOPDIR/OTHER/.
-		BUILD_SUCCEEDED=true
-		;;
-	    *)
-		;;
-	esac
-    done
+
+    # Use live-build publisher if available
+    chroot $BUILD_ROOT su -c "cd $TOPDIR/$LIVEBUILD_ROOT && lb publish --version" - root \
+	< /dev/null >/dev/null 2>&1
+    local RESULT=$?
+    if [ $RESULT == 0 ] ; then
+	local ARGS=${RELEASE:+--release -Build${RELEASE}}
+	chroot $BUILD_ROOT su -c "cd $TOPDIR/$LIVEBUILD_ROOT && lb publish ${ARGS} $TOPDIR/OTHER/" - root \
+	    < /dev/null
+    else
+	# Move created product to destination
+	for i in $BUILD_ROOT/$TOPDIR/$LIVEBUILD_ROOT/* ; do
+	    test -f "$i" || continue
+	    case "${i##*/}" in
+		*.iso)
+		    # all created files share the same name without suffix
+		    mv ${i%%.iso}.* $BUILD_ROOT/$TOPDIR/OTHER/.
+		    ;;
+		*)
+		    ;;
+	    esac
+	done
+    fi
 
     # Fail the build if no ISO was created
-    if [ -z "$(ls $BUILD_ROOT/$TOPDIR/OTHER/*.iso)" ] ; then
+    if [ -n "$(ls $BUILD_ROOT/$TOPDIR/OTHER/*.iso)" ] ; then
+	BUILD_SUCCEEDED=true
+    else
 	echo "No ISO image found"
 	cleanup_and_exit 1
     fi
