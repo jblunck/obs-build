@@ -51,6 +51,40 @@ deb_setup() {
     :>> $BUILD_ROOT/etc/default/rcS
 }
 
+pkg_preinstall_deb() {
+    ar x "$BUILD_ROOT/.init_b_cache/rpms/$PKG.deb"
+    mkdir -p .init_b_cache/scripts/control
+    $TAR -C .init_b_cache/scripts/control -z -f control.tar.gz
+    if test -f "data.tar.gz" ; then
+	$TAR -z -f data.tar.gz
+    elif test -f "data.tar.xz" ; then
+	$TAR -J -f data.tar.xz
+    fi
+    if test -e ".init_b_cache/scripts/$PKG.run" ; then
+	test -e .init_b_cache/scripts/control/preinst && mv .init_b_cache/scripts/control/preinst ".init_b_cache/scripts/$PKG.pre"
+	test -e .init_b_cache/scripts/control/postinst && mv .init_b_cache/scripts/control/postinst ".init_b_cache/scripts/$PKG.post"
+    fi
+    rm -rf .init_b_cache/scripts/control control.tar.gz data.tar.{g,x}z
+}
+
+pkg_runscripts_deb() {
+    if ! test -e $BUILD_ROOT/var/lib/dpkg/status ; then
+	deb_setup
+    fi
+    if test -e "$BUILD_ROOT/.init_b_cache/scripts/$PKG.pre" ; then
+	echo "running $PKG preinstall script"
+	deb_chroot $BUILD_ROOT ".init_b_cache/scripts/$PKG.pre" install \
+		   < /dev/null
+	rm -f "$BUILD_ROOT/.init_b_cache/scripts/$PKG.pre"
+    fi
+    if test -e "$BUILD_ROOT/.init_b_cache/scripts/$PKG.post" ; then
+	echo "running $PKG postinstall script"
+	deb_chroot $BUILD_ROOT ".init_b_cache/scripts/$PKG.post" configure '' \
+		   < /dev/null
+	rm -f "$BUILD_ROOT/.init_b_cache/scripts/$PKG.post"
+    fi
+}
+
 pkg_initdb_deb() {
     deb_setup
     # force dpkg into database to make epoch test work
@@ -117,40 +151,6 @@ pkg_finalize_deb() {
     if ! deb_chroot $BUILD_ROOT dpkg --configure --pending  2>&1; then
          echo "first configure attempt failed, trying again..."
          deb_chroot $BUILD_ROOT dpkg --configure --pending  2>&1 || cleanup_and_exit 1
-    fi
-}
-
-pkg_preinstall_deb() {
-    ar x "$BUILD_ROOT/.init_b_cache/rpms/$PKG.deb"
-    mkdir -p .init_b_cache/scripts/control
-    $TAR -C .init_b_cache/scripts/control -z -f control.tar.gz
-    if test -f "data.tar.gz" ; then
-	$TAR -z -f data.tar.gz
-    elif test -f "data.tar.xz" ; then
-	$TAR -J -f data.tar.xz
-    fi
-    if test -e ".init_b_cache/scripts/$PKG.run" ; then
-	test -e .init_b_cache/scripts/control/preinst && mv .init_b_cache/scripts/control/preinst ".init_b_cache/scripts/$PKG.pre"
-	test -e .init_b_cache/scripts/control/postinst && mv .init_b_cache/scripts/control/postinst ".init_b_cache/scripts/$PKG.post"
-    fi
-    rm -rf .init_b_cache/scripts/control control.tar.gz data.tar.{g,x}z
-}
-
-pkg_runscripts_deb() {
-    if ! test -e $BUILD_ROOT/var/lib/dpkg/status ; then
-	deb_setup
-    fi
-    if test -e "$BUILD_ROOT/.init_b_cache/scripts/$PKG.pre" ; then
-	echo "running $PKG preinstall script"
-	deb_chroot $BUILD_ROOT ".init_b_cache/scripts/$PKG.pre" install \
-		   < /dev/null
-	rm -f "$BUILD_ROOT/.init_b_cache/scripts/$PKG.pre"
-    fi
-    if test -e "$BUILD_ROOT/.init_b_cache/scripts/$PKG.post" ; then
-	echo "running $PKG postinstall script"
-	deb_chroot $BUILD_ROOT ".init_b_cache/scripts/$PKG.post" configure '' \
-		   < /dev/null
-	rm -f "$BUILD_ROOT/.init_b_cache/scripts/$PKG.post"
     fi
 }
 
