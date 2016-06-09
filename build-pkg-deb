@@ -52,19 +52,17 @@ deb_setup() {
 }
 
 pkg_preinstall_deb() {
-    ar x "$BUILD_ROOT/.init_b_cache/rpms/$PKG.deb"
-    mkdir -p .init_b_cache/scripts/control
-    $TAR -C .init_b_cache/scripts/control -z -f control.tar.gz
-    if test -f "data.tar.gz" ; then
-	$TAR -z -f data.tar.gz
-    elif test -f "data.tar.xz" ; then
-	$TAR -J -f data.tar.xz
-    fi
+    dpkg-deb --extract "$BUILD_ROOT/.init_b_cache/rpms/$PKG.deb" "$BUILD_ROOT"
+
     if test -e ".init_b_cache/scripts/$PKG.run" ; then
-	test -e .init_b_cache/scripts/control/preinst && mv .init_b_cache/scripts/control/preinst ".init_b_cache/scripts/$PKG.pre"
-	test -e .init_b_cache/scripts/control/postinst && mv .init_b_cache/scripts/control/postinst ".init_b_cache/scripts/$PKG.post"
+	dpkg-deb --control "$BUILD_ROOT/.init_b_cache/rpms/$PKG.deb" \
+		 .init_b_cache/scripts/control
+	mv .init_b_cache/scripts/control/preinst \
+	   ".init_b_cache/scripts/$PKG.pre" 2>/dev/null || true
+	mv .init_b_cache/scripts/control/postinst \
+	   ".init_b_cache/scripts/$PKG.post" 2>/dev/null || true
+	rm -rf .init_b_cache/scripts/control
     fi
-    rm -rf .init_b_cache/scripts/control control.tar.gz data.tar.{g,x}z
 }
 
 pkg_runscripts_deb() {
