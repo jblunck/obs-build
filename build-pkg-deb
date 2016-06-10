@@ -83,14 +83,124 @@ pkg_runscripts_deb() {
     fi
 }
 
+# unpack and move to $BUILD_ROOT/.init_b_cache/debootstrap
+debootstrap_unpack() {
+    local DIR=${1?missing argument}
+    local PKG_DIR=$BUILD_ROOT/.init_b_cache/debootstrap.pkg
+
+    rm -fr $DIR $PKG_DIR
+    dpkg-deb --extract $BUILD_ROOT/.init_b_cache/rpms/debootstrap.deb $PKG_DIR
+    mv $PKG_DIR/usr/share/debootstrap $DIR
+    mv $PKG_DIR/usr/sbin/debootstrap $DIR/debootstrap
+    chmod 755 $DIR/debootstrap
+    rm -fr $PKG_DIR
+}
+
+#
+# init_buildsystem already:
+# - preinstalled packages
+# - created devices
+#
+# what is left to do:
+# - create dpkg database
+# - foreign install of dpkg itself
+#
+debootstrap_first_stage ()
+{
+    local ARCH=${1?missing argument}
+    local SUITE=${2?missing argument}
+
+    #
+    # finddebs/dldebs downloads the indices (we don't care of)
+    #
+    local APT_LISTS="$BUILD_ROOT/var/lib/apt/lists"
+    mkdir -p ${APT_LISTS}
+    touch "${APT_LISTS}/debootstrap.invalid_dists_${SUITE}_Release"
+    touch "${APT_LISTS}/debootstrap.invalid_dists_${SUITE}_main_binary-${ARCH}_Packages"
+
+    mkdir -p "$BUILD_ROOT/var/lib/dpkg/info"
+    : >"$BUILD_ROOT/var/lib/dpkg/status"
+    : >"$BUILD_ROOT/var/lib/dpkg/available"
+
+    # foreign install of dpkg
+    local DPKG_DEB=$BUILD_ROOT/.init_b_cache/rpms/dpkg.deb
+    cat > $BUILD_ROOT/var/lib/dpkg/status <<EOF
+Package: dpkg
+Version: $(dpkg-deb --field ${DPKG_DEB} Version)
+Maintainer: unknown
+Architecture: $(dpkg-deb --field ${DPKG_DEB} Architecture)
+Status: install ok installed
+Description: unknown
+EOF
+    touch $BUILD_ROOT/var/lib/dpkg/info/dpkg.list
+}
+
+debootstrap_second_stage_prepare ()
+{
+    local ARCH=${1?missing argument}
+    local SUITE=${2?missing argument}
+
+    echo "${ARCH}"            >$BUILD_ROOT/debootstrap/arch
+    echo "${SUITE}"           >$BUILD_ROOT/debootstrap/suite
+    ln -sf "scripts/${SUITE}"  $BUILD_ROOT/debootstrap/suite-script
+    echo "minbase"            >$BUILD_ROOT/debootstrap/variant
+
+    # all required package should be listed as preinstall
+    echo "$PACKAGES_TO_PREINSTALL" >$BUILD_ROOT/debootstrap/required
+
+    # all other packages are treated as base packages
+    echo "$PACKAGES_TO_INSTALL" >$BUILD_ROOT/debootstrap/base
+
+    # create archive with hardlinks that are removed once debootstrap finishes
+    mkdir -p $BUILD_ROOT/debootstrap/archives
+    ln -L $BUILD_ROOT/.init_b_cache/rpms/* $BUILD_ROOT/debootstrap/archives/
+    for pkg in $(find $BUILD_ROOT/debootstrap/archives -name '*.deb') ; do
+        local name=$(dpkg-deb --field $pkg Package)
+
+        echo $name ${pkg##$BUILD_ROOT}
+    done > $BUILD_ROOT/debootstrap/debpaths
+}
+
+debootstrap_suite() {
+    local DEBIAN_VERSION=$(cat $BUILD_ROOT/etc/debian_version)
+
+    case "${DEBIAN_VERSION}" in
+        7.*)
+            echo "wheezy"
+            ;;
+        8.*)
+            echo "jessie"
+            ;;
+        9.*)
+            echo "stretch"
+            ;;
+        *)
+            echo ${DEBIAN_VERSION%%/*}
+            ;;
+    esac
+}
+
 pkg_initdb_deb() {
     deb_setup
-    # force dpkg into database to make epoch test work
-    if ! test "$BUILD_ROOT/.init_b_cache/rpms/dpkg.deb" -ef "$BUILD_ROOT/.init_b_cache/dpkg.deb" ; then
-	rm -f $BUILD_ROOT/.init_b_cache/dpkg.deb
-	cp $BUILD_ROOT/.init_b_cache/rpms/dpkg.deb $BUILD_ROOT/.init_b_cache/dpkg.deb || cleanup_and_exit 1
+
+    local ARCH=$(deb_chroot $BUILD_ROOT dpkg --print-architecture)
+    local SUITE=$(debootstrap_suite)
+
+    if ! test -r $BUILD_ROOT/.init_b_cache/rpms/debootstrap.deb ; then
+	# force dpkg into database to make epoch test work
+	if ! test "$BUILD_ROOT/.init_b_cache/rpms/dpkg.deb" -ef "$BUILD_ROOT/.init_b_cache/dpkg.deb" ; then
+	    rm -f $BUILD_ROOT/.init_b_cache/dpkg.deb
+	    cp $BUILD_ROOT/.init_b_cache/rpms/dpkg.deb $BUILD_ROOT/.init_b_cache/dpkg.deb || cleanup_and_exit 1
+	fi
+	deb_chroot $BUILD_ROOT dpkg --install --force-depends .init_b_cache/dpkg.deb >/dev/null 2>&1
+    else
+	debootstrap_unpack $BUILD_ROOT/debootstrap
+	debootstrap_first_stage ${ARCH} ${SUITE}
+	debootstrap_second_stage_prepare ${ARCH} ${SUITE}
+
+	deb_chroot $BUILD_ROOT /debootstrap/debootstrap \
+		   --second-stage --no-check-gpg
     fi
-    deb_chroot $BUILD_ROOT dpkg --install --force-depends .init_b_cache/dpkg.deb >/dev/null 2>&1
 }
 
 pkg_prepare_deb() {
